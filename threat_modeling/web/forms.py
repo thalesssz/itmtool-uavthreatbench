@@ -1,7 +1,7 @@
 """WTForms for the Threat Modeling web application."""
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired, FileAllowed
-from wtforms import StringField, TextAreaField, SelectField, BooleanField, IntegerField
+from wtforms import StringField, TextAreaField, SelectField, BooleanField, IntegerField, FloatField
 from wtforms.validators import DataRequired, Optional, NumberRange
 
 
@@ -30,7 +30,8 @@ class AnalysisForm(FlaskForm):
             ('', 'Select a provider...'),
             ('OPENAI', 'OpenAI'),
             ('GOOGLE', 'Google'),
-            ('ANTHROPIC', 'Anthropic')
+            ('ANTHROPIC', 'Anthropic'),
+            ('OLLAMA', 'Ollama (local)')
         ],
         validators=[DataRequired()],
         default=''
@@ -58,3 +59,20 @@ class RAGEnhancementForm(FlaskForm):
         default=5
     )
 
+
+
+class CoverageForm(FlaskForm):
+    """Form for reference coverage: expected threats and which sources to check."""
+    expected_threats = TextAreaField(
+        'Expected Threats',
+        validators=[DataRequired(message='Paste at least one expected threat')],
+        render_kw={'rows': 8,
+                   'placeholder': 'One expected threat per line, as written by the reference source.'}
+    )
+    include_tmt = BooleanField('TMT threats (from the .tm7)', default=True)
+    include_ai = BooleanField('AI analysis threats', default=True)
+    threshold = FloatField(
+        'Score threshold',
+        validators=[DataRequired(), NumberRange(min=0.0, max=1.0)],
+        default=0.7
+    )

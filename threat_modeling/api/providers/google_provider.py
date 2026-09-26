@@ -3,6 +3,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 from typing import Optional
 
+from ...config.settings import LLM_TEMPERATURE, LLM_SEED
+
 
 class Threat(BaseModel):
     """Single threat entry for Google structured output (ThreatModel)."""
@@ -32,7 +34,9 @@ def create_google_client(model_name: str, api_key: Optional[str] = None, with_st
     """
     llm = ChatGoogleGenerativeAI(
         model=model_name,
-        api_key=api_key
+        api_key=api_key,
+        temperature=LLM_TEMPERATURE,
+        seed=LLM_SEED
     )
     if with_structure:
         return llm.with_structured_output(ThreatModel)

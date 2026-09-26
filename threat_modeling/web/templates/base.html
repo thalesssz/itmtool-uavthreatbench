@@ -77,6 +77,15 @@
                         </div>
                     </a>
                 </li>
+                <li class="stepper-arrow"><i class="bi bi-chevron-right"></i></li>
+
+                <li class="stepper-item {% if step_active == 6 %}active{% endif %} {% if session.get('coverage_complete') %}completed{% endif %} {% if not session.get('analysis_complete') %}disabled{% endif %}">
+                    <a href="{% if session.get('analysis_complete') %}{{ url_for('main.coverage') }}{% else %}#{% endif %}" class="stepper-link">
+                        <div class="stepper-box">
+                            <span>Coverage</span>
+                        </div>
+                    </a>
+                </li>
             </ol>
         </div>
     </nav>

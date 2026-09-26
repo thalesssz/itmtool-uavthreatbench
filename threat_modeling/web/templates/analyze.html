@@ -43,10 +43,12 @@
                         <div class="col-md-6">
                             <!-- Step 2: API Key -->
                             <div class="mb-3" id="api_key_group" style="display: none;">
+                                <div id="api_key_field">
                                 <label for="api_key" class="form-label fw-bold">
                                     <i class="bi bi-key me-2 text-primary"></i> 2. API Key
                                 </label>
                                 {{ form.api_key(class="form-control form-control-lg", id="api_key", type="password", placeholder="Enter your API key") }}
+                                </div>
                                 {% if form.api_key.errors %}
                                     <div class="text-danger small mt-1">
                                         {% for error in form.api_key.errors %}
@@ -121,6 +123,46 @@
                         <div id="runAnalysisHint" class="text-center mt-3 small text-muted">
                             Please select a provider and enter an API key to begin.
                         </div>
+
+                        <div class="card bg-light border-0 mt-4">
+                            <div class="card-body">
+                                <h6 class="fw-bold mb-1"><i class="bi bi-cloud-arrow-up me-2"></i> Paid mode</h6>
+                                <p class="small text-muted mb-3">
+                                    The key stays on the server. The analyst and the judge are different models,
+                                    so no model grades its own threats. The judge is used in
+                                    <em>Compare with TMT</em> and in <em>Reference coverage</em>.
+                                </p>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label for="paid_analyst_model" class="form-label small fw-bold">Analyst model</label>
+                                        <input type="text" class="form-control" id="paid_analyst_model" name="paid_analyst_model"
+                                               value="{{ paid_analyst_model }}" list="paid_model_options">
+                                        <small class="form-text text-muted">Generates the threats, one call per data flow.</small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="paid_judge_model" class="form-label small fw-bold">Judge model</label>
+                                        <input type="text" class="form-control" id="paid_judge_model" name="paid_judge_model"
+                                               value="{{ paid_judge_model }}" list="paid_model_options">
+                                        <small class="form-text text-muted">
+                                            Hundreds of short calls: avoid reasoning models here, they bill their thinking.
+                                        </small>
+                                    </div>
+                                </div>
+                                <datalist id="paid_model_options">
+                                    <option value="openai/gpt-5">
+                                    <option value="openai/gpt-5-mini">
+                                    <option value="google/gemini-2.5-pro">
+                                    <option value="google/gemini-2.5-flash">
+                                    <option value="anthropic/claude-haiku-4.5">
+                                    <option value="deepseek/deepseek-v4-flash">
+                                </datalist>
+                                <div class="d-grid mt-3">
+                                    <button type="submit" name="run_paid" value="1" class="btn btn-dark" formnovalidate>
+                                        <i class="bi bi-cloud-arrow-up me-2"></i> Run with the paid models
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -181,9 +223,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const modelDisplay = document.getElementById('model_display');
     const runAnalysisHint = document.getElementById('runAnalysisHint');
     
+    // Ollama roda localmente e nao usa chave de API. Sem esta excecao o botao
+    // "Find Models" e o "Run Analysis" ficam travados para sempre no provedor local.
+    function providerNeedsKey() {
+        return providerSelect.value !== 'OLLAMA';
+    }
+
     function validateRunAnalysisButton() {
         const provider = providerSelect.value && providerSelect.value !== '';
-        const apiKey = apiKeyInput.value.trim();
+        const apiKey = providerNeedsKey() ? apiKeyInput.value.trim() : 'n/a';
         const model = modelSelect.value && modelSelect.value !== '';
         const modelsLoaded = !modelSelect.disabled && modelSelect.options.length > 1;
         
@@ -211,9 +259,14 @@ document.addEventListener('DOMContentLoaded', function() {
     providerSelect.addEventListener('change', function() {
         const provider = this.value;
         if (provider && provider !== '') {
+            // O botao "Find Models" mora DENTRO de api_key_group. Esconder o
+            // grupo inteiro para o Ollama escondia o botao junto, deixando a
+            // tela sem saida. Some apenas o campo da chave.
             apiKeyGroup.style.display = 'block';
+            const keyField = document.getElementById('api_key_field');
+            if (keyField) keyField.style.display = providerNeedsKey() ? 'block' : 'none';
             providerDisplay.textContent = provider;
-            fetchModelsBtn.disabled = !apiKeyInput.value.trim();
+            fetchModelsBtn.disabled = providerNeedsKey() && !apiKeyInput.value.trim();
         } else {
             apiKeyGroup.style.display = 'none';
             modelGroup.style.display = 'none';
@@ -227,7 +280,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     apiKeyInput.addEventListener('input', function() {
         const hasProvider = providerSelect.value && providerSelect.value !== '';
-        fetchModelsBtn.disabled = !hasProvider || !this.value.trim();
+        fetchModelsBtn.disabled = !hasProvider || (providerNeedsKey() && !this.value.trim());
         validateRunAnalysisButton();
     });
     

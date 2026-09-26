@@ -20,3 +20,7 @@ Answer MUST BE an JSON in this format:
     // ... continue for other threats relevant to this interaction
   ]
 }
+
+The value of "Category" MUST be exactly one of these six strings, spelled exactly as written:
+Spoofing | Tampering | Repudiation | Information Disclosure | Denial of Service | Elevation of Privilege
+Never add abbreviations, letters, codes or suffixes to it, and never put two categories in the same threat.

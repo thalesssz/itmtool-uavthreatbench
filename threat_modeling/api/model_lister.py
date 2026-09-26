@@ -18,17 +18,57 @@ def list_openai_models(api_key: Optional[str] = None) -> List[Dict[str, str]]:
     try:
         client = openai.OpenAI(api_key=api_key) if api_key else openai.OpenAI()
         models = client.models.list()
-        
-        # Filter for chat models (gpt-*)
-        chat_models = [
-            {'id': model.id, 'name': model.id}
-            for model in models.data
-            if model.id.startswith('gpt-') or model.id.startswith('o1-') or model.id.startswith('o3-')
-        ]
-        
+
+        # The gpt-/o1-/o3- prefix filter only makes sense against OpenAI itself.
+        # When OPENAI_BASE_URL points at an OpenAI-compatible provider (OpenRouter,
+        # Groq, GitHub Models...), model ids look like "vendor/model:free" and the
+        # filter would drop every one of them, leaving the dropdown empty.
+        base_url = str(getattr(client, "base_url", "") or "")
+        is_openai = "api.openai.com" in base_url or not base_url
+
+        if is_openai:
+            chat_models = [
+                {'id': model.id, 'name': model.id}
+                for model in models.data
+                if model.id.startswith('gpt-') or model.id.startswith('o1-') or model.id.startswith('o3-')
+            ]
+        else:
+            chat_models = [{'id': model.id, 'name': model.id} for model in models.data]
+
         return sorted(chat_models, key=lambda x: x['id'])
     except Exception as e:
         raise Exception(f"Error listing OpenAI models: {str(e)}")
+
+
+def list_ollama_models(server_url: Optional[str] = None) -> List[Dict[str, str]]:
+    """
+    List models available on a local/remote Ollama server.
+
+    LLMClient already supports the "OLLAMA" provider, but there was no lister
+    for it, so the UI had no way to populate the model dropdown.
+
+    Args:
+        server_url: Ollama base URL; defaults to OLLAMA_URL from settings.
+
+    Returns:
+        List of dictionaries with 'id' and 'name' keys
+    """
+    import json
+    import os
+    import urllib.request
+
+    base = (server_url or os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{base}/api/tags", timeout=10) as response:
+            data = json.loads(response.read())
+        models = [
+            {'id': m['name'], 'name': m['name']}
+            for m in data.get('models', [])
+            if m.get('name')
+        ]
+        return sorted(models, key=lambda x: x['id'])
+    except Exception as e:
+        raise Exception(f"Error listing Ollama models at {base}: {str(e)}")
 
 
 def list_google_models(api_key: Optional[str] = None) -> List[Dict[str, str]]:

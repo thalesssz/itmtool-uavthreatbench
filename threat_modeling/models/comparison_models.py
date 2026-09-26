@@ -24,13 +24,7 @@ class ThreatComparisonResponse(BaseModel):
         description="Explanation of why the threats are considered similar or different"
     )
 
-    class Config:
-        """Pydantic model configuration (json_schema_extra)."""
-        json_schema_extra = {
-            "example": {
-                "is_similar": True,
-                "similarity_score": 0.85,
-                "explanation": "Both threats describe unauthorized access attempts. The TMT threat focuses on credential theft, while the AI threat emphasizes privilege escalation, but they address the same core security concern."
-            }
-        }
+    # No json_schema_extra example here: the schema can reach the model through
+    # structured output, and a literal example score (it used to be 0.85) is
+    # exactly the value small models were returning for every pair.
 

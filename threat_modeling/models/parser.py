@@ -417,16 +417,29 @@ def threat_model_to_json(threat_model: ThreatModelTM7) -> str:
     Args:
         threat_model: ThreatModelTM7 instance with a non-empty threats list.
 
+    The "DataFlow" value is the flow NAME, not its GUID. ComparisonService pairs
+    TMT threats with AI threats using the key (dataflow_name, category), and the
+    AI side supplies the flow name. Emitting a GUID here made every key mismatch,
+    so no pair was ever compared and every threat was reported as TMT-only or
+    AI-only. Falls back to the GUID when the flow cannot be resolved.
+
     Returns:
         Pretty-printed JSON string (indent=2, ensure_ascii=False).
     """
     threats_data = []
 
+    # Map flow GUID -> flow name across every diagram in the model.
+    flow_names = {
+        flow.guid: flow.name
+        for diagram in threat_model.diagrams
+        for flow in diagram.dataflows
+    }
+
     for threat in threat_model.threats:
         threat_entry = {
             "Category": threat.category,
             "Description": threat.description,
-            "DataFlow": threat.flow_guid
+            "DataFlow": flow_names.get(threat.flow_guid, threat.flow_guid)
         }
         threats_data.append(threat_entry)
 

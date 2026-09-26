@@ -17,6 +17,11 @@
         <div class="alert alert-info">
             <i class="bi bi-info-circle"></i> Comparing TMT threats with AI analysis results for diagram: <strong>{{ diagram_name }}</strong>
         </div>
+        <p class="small mb-0">
+            <i class="bi bi-person-gear me-1"></i> Analyst: <code>{{ model_name }}</code>
+            &middot; Judge: <code>{{ judge_name }}</code>
+            {% if judge_name == model_name %}<span class="text-muted">(same model: local mode)</span>{% endif %}
+        </p>
         <hr>
     </div>
 </div>

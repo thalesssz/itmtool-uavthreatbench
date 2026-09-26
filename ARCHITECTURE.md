@@ -70,6 +70,7 @@ itmt_/
 │   └── json_output.txt
 └── threat_modeling/
     ├── __init__.py
+    ├── coverage_cli.py       # CLI: reference coverage across threat sources
     ├── config/
     │   ├── __init__.py
     │   └── settings.py       # Env-based config (API keys, RAG, paths)
@@ -94,7 +95,8 @@ itmt_/
     │   ├── threat_model_service.py  # Parse .tm7, get diagram/threat JSON, validate
     │   ├── analysis_service.py      # Run analysis, build DataFrame from results
     │   ├── rag_service.py           # ChromaDB search, RAG enhance, parse RAGResponse
-    │   └── comparison_service.py    # Compare TMT vs AI threats, LLM-based similarity
+    │   ├── comparison_service.py    # Compare TMT vs AI threats, LLM-based similarity
+    │   └── coverage_service.py      # Reference coverage across threat sources (LLM judge)
     ├── web/
     │   ├── __init__.py
     │   ├── app.py            # create_app(): Flask factory, session, blueprint
@@ -128,6 +130,7 @@ itmt_/
 - **AnalysisService**: Builds prompts (main content, few-shot, CoT) via `message_builder`; uses `LLMClient` to run analysis per interaction; builds DataFrame from LLM responses (OpenAI/Anthropic JSON vs Google structured).
 - **RAGService**: Connects to ChromaDB (HTTP client); uses configurable embeddings (Ollama, OpenAI, Google); similarity search; RAG enhancement uses `generate_rag_messages` and `LLMClient.invoke_with_structure(RAGResponse)`; parses response to NIST control list.
 - **ComparisonService**: Pairs TMT and AI threats by (dataflow, category); for each pair calls LLM with `generate_comparison_messages` and `invoke_with_structure(ThreatComparisonResponse)`; builds DataFrame with similarity and source (both / tmt_only / ai_only).
+- **CoverageService**: Checks a reference threat list (e.g. the expected threats of a benchmark scenario) against any number of threat sources (TMT threats from the .tm7, AI analysis exports, other pipelines). No dataflow/category key: every reference threat is judged against every distinct threat of each source with `generate_coverage_messages` and `invoke_with_structure(ThreatComparisonResponse)`; a reference threat is covered by a source when its best score reaches the threshold (default 0.7). Exposed through `python -m threat_modeling.coverage_cli`.
 
 ### 3. API and Models
 
@@ -140,7 +143,7 @@ itmt_/
 
 ### 4. Configuration
 
-- **settings.py**: Reads from environment: API keys (OpenAI, Google), Ollama URL, default provider/model; RAG (Chroma host/port/SSL, collection name, embedding provider/model); `DATA_DIR`, `BLOCKS_DIR`.
+- **settings.py**: Reads from environment: API keys (OpenAI, Google), Ollama URL, default provider/model; sampling (`LLM_TEMPERATURE`, default 0, and `LLM_SEED`, default 42, applied to every provider that supports them; empty value = provider default); RAG (Chroma host/port/SSL, collection name, embedding provider/model); `DATA_DIR`, `BLOCKS_DIR`.
 - **Environment**: Use `example_env` as template; copy to `.env` and set keys and optional overrides.
 
 ## Data Flows
@@ -167,6 +170,12 @@ itmt_/
 2. TMT threats for selected diagram and AI results DataFrame are passed to `ComparisonService.run_comparison`.
 3. Pairs (TMT, AI) by (dataflow, category); each pair → comparison messages → `invoke_with_structure(ThreatComparisonResponse)`.
 4. DataFrame with similar, TMT-only, AI-only; comparison CSV download.
+
+### Coverage flow (CLI)
+
+1. `coverage_cli` loads the reference threats and scenario description from a scenario JSON, the TMT threats saved in a .tm7, and extra sources from .txt/.csv/.json files.
+2. `CoverageService.run_coverage`: for each reference threat × source × distinct candidate text → coverage messages → `invoke_with_structure(ThreatComparisonResponse)`.
+3. Outputs (tab-separated): `<out>-pairs.csv` (every judgment), `<out>-coverage.csv` (best score and covered flag per reference threat and source), `<out>-summary.csv` (covered count per source).
 
 ## Parsing flow (.tm7)
 

@@ -91,12 +91,20 @@ def generate_question(interaction_information: str) -> str:
 
 Analyze the single interaction defined in the `INTERACTION TO ANALYZE` section. Use the `OVERALL APPLICATION CONTEXT` to understand its place in the system and potential risks. Then, follow these steps:
 
-1.  Check if have relevant threats in this interaction, and classify those with STRIDE category (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege).
-2.  Each threat scenario must clearly describe how the threat could occur in the context of this specific interaction.
-3.  For each threat, include the potential impact it may have on the system, data, or stakeholders.
-4.  For each threat, suggest how it can be mitigated.
-5.  For each threat, suggest maximum of 3 relevant NIST 800-53 security controls that could mitigate or reduce the risk.
-6.  It's not mandatory to suggests threats, so do not force.
+1.  Consider the six STRIDE categories one by one for this interaction, using these definitions, and decide for each whether a plausible threat exists here:
+    - Spoofing: something or someone pretends to be one of the two endpoints of this interaction.
+    - Tampering: the data carried by this interaction, or the component that handles it, is modified without authorization.
+    - Repudiation: an endpoint can later deny having sent, received or performed this interaction, because there is no reliable log, signature or receipt.
+    - Information Disclosure: someone who should not read this data can read it, in transit or where it is stored.
+    - Denial of Service: this interaction, or one of its endpoints, can be made unavailable, slow or unreliable.
+    - Elevation of Privilege: this interaction lets an actor obtain rights it should not have, for example by crossing a trust boundary, bypassing a check, or getting the target to execute code or commands.
+    Take into account the trust boundary the interaction crosses and the direction of the data. Keep the plausible ones and drop the rest; never invent a threat just to fill a category.
+2.  Classify each threat you keep with exactly one STRIDE category, written exactly as one of those six values. Do not add abbreviations, letters, codes or suffixes (write "Tampering", never "Tampering (T)").
+3.  Each threat scenario must clearly describe how the threat could occur in the context of this specific interaction.
+4.  For each threat, include the potential impact it may have on the system, data, or stakeholders.
+5.  For each threat, suggest how it can be mitigated.
+6.  For each threat, suggest maximum of 3 relevant NIST 800-53 security controls that could mitigate or reduce the risk.
+7.  It's not mandatory to suggests threats, so do not force.
 
 '''
     return question
@@ -247,13 +255,24 @@ Consider:
 
 Two threats should be considered similar if they address the same core security issue, even if the wording or specific details differ.
 
+Score the pair on this scale:
+- 0.0 to 0.3: different security concerns (different attack, target asset or goal)
+- 0.4 to 0.6: related area, but a different attack vector or a different impact
+- 0.7 to 0.8: same core security concern, with differences in attack vector, affected component or impact
+- 0.9 to 1.0: the same threat, even if worded differently
+
+Set "is_similar" to true only when "similarity_score" is 0.7 or higher.
+
 Answer MUST BE a JSON in this format:
 {
-    "is_similar": true,
-    "similarity_score": 0.85,
-    "explanation": "Brief explanation of why they are similar or different"
+    "is_similar": <true or false>,
+    "similarity_score": <number from 0.0 to 1.0>,
+    "explanation": "<brief explanation of why they are similar or different>"
 }
 """
+    # The format example used to carry literal values (true / 0.85). Small
+    # models copied them: every pair in two full runs came back as true / 0.85.
+    # Placeholders plus an explicit scale keep the score meaningful.
     
     return SystemMessage(content=system_prompt)
 
@@ -303,6 +322,96 @@ def generate_comparison_messages(tmt_description: str, ai_description: str, cate
     system_message = generate_system_prompt_comparison()
     user_prompt = generate_user_prompt_comparison(tmt_description, ai_description, category, dataflow_name)
     user_message = HumanMessage(content=user_prompt)
-    
+
+    return [system_message, user_message]
+
+
+def generate_system_prompt_coverage() -> SystemMessage:
+    """
+    Generate system prompt for reference coverage.
+
+    Unlike the TMT-vs-AI comparison, the pair is not tied to a dataflow or a
+    STRIDE category: a curated reference threat (e.g. an expected threat of a
+    benchmark scenario) is checked against a threat from any source.
+
+    Returns:
+        SystemMessage with coverage instructions
+    """
+    system_prompt = """You are a cybersecurity expert evaluating threat models.
+You receive one EXPECTED threat, curated by specialists as a reference for a scenario, and one CANDIDATE threat produced by a threat modeling source.
+Decide whether the candidate covers the expected threat: whether it describes the same security concern, so that a reviewer reading the candidate would have identified the expected threat.
+
+Consider:
+- Core security concern (what vulnerability or attack is being described)
+- Attack vector or method
+- Affected asset, component or data
+- Potential impact
+
+The candidate may use different wording, be more specific, or be classified under a different STRIDE category. Judge the security concern, not the wording or the category.
+
+To count as covering the expected threat, the candidate must concern:
+- the same asset or data (for example, inventory data and firmware images are different assets), and
+- the same security property (confidentiality, integrity or availability).
+
+Do not credit a candidate because it could eventually, indirectly or in a further step lead to the expected threat. A compromise that "could later allow" the expected threat does not cover it.
+
+Score the pair on this scale:
+- 0.0 to 0.3: different security concerns (different attack, target asset or goal)
+- 0.4 to 0.6: related area, but a different attack vector or a different impact
+- 0.7 to 0.8: same core security concern, with differences in attack vector, affected component or impact
+- 0.9 to 1.0: the same threat, even if worded differently
+
+Set "is_similar" to true only when "similarity_score" is 0.7 or higher.
+
+Answer MUST BE a JSON in this format:
+{
+    "is_similar": <true or false>,
+    "similarity_score": <number from 0.0 to 1.0>,
+    "explanation": "<brief explanation of why the candidate does or does not cover the expected threat>"
+}
+"""
+    return SystemMessage(content=system_prompt)
+
+
+def generate_user_prompt_coverage(expected_threat: str, candidate_threat: str, scenario_context: str = "") -> str:
+    """
+    Generate user prompt for reference coverage.
+
+    Args:
+        expected_threat: Reference threat text
+        candidate_threat: Threat text from the source being evaluated
+        scenario_context: Optional scenario description shown to the judge
+
+    Returns:
+        Formatted user prompt string
+    """
+    context = f"Scenario:\n{scenario_context}\n\n" if scenario_context else ""
+    user_prompt = f"""{context}EXPECTED threat:
+{expected_threat}
+
+CANDIDATE threat:
+{candidate_threat}
+
+Does the candidate threat cover the expected threat? Provide your analysis."""
+
+    return user_prompt
+
+
+def generate_coverage_messages(expected_threat: str, candidate_threat: str, scenario_context: str = "") -> List:
+    """
+    Generate complete message list for reference coverage.
+
+    Args:
+        expected_threat: Reference threat text
+        candidate_threat: Threat text from the source being evaluated
+        scenario_context: Optional scenario description shown to the judge
+
+    Returns:
+        List of messages [SystemMessage, HumanMessage] ready for LLM invocation
+    """
+    system_message = generate_system_prompt_coverage()
+    user_prompt = generate_user_prompt_coverage(expected_threat, candidate_threat, scenario_context)
+    user_message = HumanMessage(content=user_prompt)
+
     return [system_message, user_message]
 

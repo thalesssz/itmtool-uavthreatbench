@@ -2,6 +2,8 @@
 from langchain_openai import ChatOpenAI
 from typing import Optional
 
+from ...config.settings import LLM_TEMPERATURE, LLM_SEED
+
 
 def create_openai_client(model_name: str, api_key: Optional[str] = None) -> ChatOpenAI:
     """
@@ -17,6 +19,8 @@ def create_openai_client(model_name: str, api_key: Optional[str] = None) -> Chat
     return ChatOpenAI(
         model=model_name,
         model_kwargs={"response_format": {"type": "json_object"}},
-        api_key=api_key
+        api_key=api_key,
+        temperature=LLM_TEMPERATURE,
+        seed=LLM_SEED
     )
 

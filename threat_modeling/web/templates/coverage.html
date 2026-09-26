@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% set step_active = 6 %}
+
+{% block title %}Reference Coverage - ITA Threat Modeling Tool{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2 class="h4 fw-bold mb-0">
+                <i class="bi bi-bullseye me-2 text-primary"></i> Reference Coverage
+                {% if current_judge %}<span class="text-primary">{{ current_judge }}</span>{% endif %}
+            </h2>
+            {% if current %}
+            <a href="{{ url_for('main.download', format_type='coverage_csv') }}" class="btn btn-outline-success">
+                <i class="bi bi-download me-2"></i> Download CSV
+            </a>
+            {% endif %}
+        </div>
+        <p class="text-muted mb-0 mt-2">
+            Checks reference threats (for example the expected threats of a benchmark scenario) against the
+            threats found by the TMT and by the AI analysis. Reference threats have no dataflow or category,
+            so each one is judged against every threat of each source by description.
+        </p>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white">
+        <h5 class="mb-0">Reference threats</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST">
+            {{ form.hidden_tag() }}
+            <div class="mb-3">
+                {{ form.expected_threats(class="form-control") }}
+                {% if form.expected_threats.errors %}
+                    <div class="text-danger small mt-2">{% for e in form.expected_threats.errors %}<div>{{ e }}</div>{% endfor %}</div>
+                {% endif %}
+                <small class="form-text text-muted">One threat per line.</small>
+            </div>
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <div class="form-check">
+                        {{ form.include_tmt(class="form-check-input") }}
+                        <label class="form-check-label" for="include_tmt">{{ form.include_tmt.label.text }}</label>
+                    </div>
+                    <div class="form-check">
+                        {{ form.include_ai(class="form-check-input") }}
+                        <label class="form-check-label" for="include_ai">{{ form.include_ai.label.text }}</label>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <label for="threshold" class="form-label small fw-bold">Score threshold</label>
+                    {{ form.threshold(class="form-control form-control-sm", step="0.05", min="0", max="1") }}
+                </div>
+                <div class="col-md-3">
+                    <label for="judge_model" class="form-label small fw-bold">Paid judge model</label>
+                    <input type="text" class="form-control form-control-sm" id="judge_model" name="judge_model"
+                           value="{{ judge_default }}" list="judge_model_options">
+                    <datalist id="judge_model_options">
+                        <option value="google/gemini-2.5-flash">
+                        <option value="anthropic/claude-haiku-4.5">
+                        <option value="deepseek/deepseek-v4-flash">
+                        <option value="openai/gpt-5-mini">
+                    </datalist>
+                </div>
+                <div class="col-md-4 text-md-end">
+                    {% if not paid_mode %}
+                    <button type="submit" class="btn btn-primary fw-bold">
+                        <i class="bi bi-play-fill me-1"></i> Run with {{ local_model }}
+                    </button>
+                    {% endif %}
+                    <button type="submit" name="run_paid" value="1" class="btn btn-dark fw-bold ms-2">
+                        <i class="bi bi-cloud-arrow-up me-1"></i> Run with the paid judge
+                    </button>
+                </div>
+            </div>
+            <div class="small text-muted mt-3">
+                {% if paid_mode %}
+                    Paid mode: the threats were written by <code>{{ analyst_model }}</code>, and the judge is a
+                    different model. The key stays on the server.
+                {% else %}
+                    Local mode: <code>{{ local_model }}</code> writes the threats and also judges them. Run the paid
+                    judge too to compare the two.
+                {% endif %}
+                One call per reference threat and distinct threat of each source, so this takes minutes:
+                keep the tab open.
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if comparison %}
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white">
+        <h5 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i> Judge against judge</h5>
+        <small class="text-muted">Same threats, same criteria, different judge model.</small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr class="small text-uppercase text-muted">
+                        <th>Reference</th>
+                        <th>Source</th>
+                        {% for judge in judges %}
+                        <th class="text-center">
+                            {{ judge }}
+                            {% if runs[judge].paid %}<span class="badge bg-dark ms-1">paid</span>{% endif %}
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in comparison %}
+                    <tr>
+                        <td class="fw-medium">T{{ row.expected_index }}</td>
+                        <td class="text-muted">{{ row.source }}</td>
+                        {% for judge in judges %}
+                        <td class="text-center">
+                            {% if judge in row.scores %}
+                                <span class="badge {% if row.covered[judge] %}bg-success{% elif row.scores[judge] >= 0.4 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                    {{ "%.2f" | format(row.scores[judge]) }}
+                                </span>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <th colspan="2" class="text-end">Covered (each threat counted once)</th>
+                        {% for judge in judges %}
+                        <th class="text-center">
+                            {% for s in runs[judge].summary %}
+                                <div><small class="text-muted">{{ s.source }}</small>
+                                    <strong>{{ s.expected_covered_unique }}/{{ s.expected_total }}</strong></div>
+                            {% endfor %}
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if current %}
+<div class="row mb-4">
+    {% for row in current.summary %}
+    <div class="col-md-4">
+        <div class="card text-center summary-card border-primary">
+            <div class="card-body">
+                <h2 class="text-primary mb-1">{{ row.expected_covered_unique }} / {{ row.expected_total }}</h2>
+                <p class="card-text mb-1"><strong>{{ row.source }}</strong></p>
+                <p class="card-text text-muted mb-0">
+                    <small>
+                        {{ row.expected_covered }} / {{ row.expected_total }} counting a threat more than once<br>
+                        {{ row.candidates_matching_reference }} of {{ row.distinct_candidates }} threats match the reference
+                    </small>
+                </p>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+<div class="alert alert-light border small">
+    <i class="bi bi-info-circle"></i> The headline number credits each threat at most once. The second line lets
+    the same threat cover two reference threats, which rewards generic wording.
+</div>
+
+{% for index, rows in current.rows | groupby('expected_index') %}
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white">
+        <h6 class="mb-0">Reference threat {{ index }}</h6>
+        <div class="text-muted small">{{ rows[0].expected_threat }}</div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr class="small text-uppercase text-muted">
+                        <th style="width: 12%">Source</th>
+                        <th style="width: 13%">Score</th>
+                        <th style="width: 37%">Closest threat found</th>
+                        <th style="width: 38%">Why the judge said so</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td class="fw-medium">{{ row.source }}</td>
+                        <td>
+                            <div class="progress" style="height: 20px;">
+                                <div class="progress-bar {% if row.covered %}bg-success{% elif row.best_score >= 0.4 %}bg-warning{% else %}bg-danger{% endif %}"
+                                     role="progressbar" style="width: {{ (row.best_score * 100) | round }}%">
+                                    {{ "%.2f" | format(row.best_score) }}
+                                </div>
+                            </div>
+                            <small class="{% if row.covered %}text-success{% else %}text-muted{% endif %}">
+                                {% if row.covered %}covered{% else %}not covered{% endif %}
+                            </small>
+                        </td>
+                        <td>{{ row.best_candidate }}</td>
+                        <td class="text-muted">{{ row.best_explanation }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<div class="row mt-4">
+    <div class="col-12">
+        <a href="{{ url_for('main.results') }}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Results
+        </a>
+    </div>
+</div>
+{% endblock %}
