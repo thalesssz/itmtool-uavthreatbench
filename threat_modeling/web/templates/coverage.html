@@ -4,31 +4,156 @@
 
 {% block title %}Reference Coverage - ITA Threat Modeling Tool{% endblock %}
 
+{% block extra_head %}
+<style>
+    .how-step { display: flex; gap: .75rem; align-items: flex-start; }
+    .how-num { flex: 0 0 1.8rem; height: 1.8rem; border-radius: 50%; background: var(--ita-blue); color: #fff;
+               font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: .85rem; }
+    .board-row { display: flex; align-items: center; gap: 1rem; padding: .9rem 0; border-top: 1px solid var(--ita-border); }
+    .board-row:first-of-type { border-top: 0; }
+    .board-source { flex: 0 0 13rem; }
+    .board-score { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .board-score small { font-size: 1rem; color: #718096; font-weight: 600; }
+    .tiles { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .tile { width: 5.6rem; border-radius: .5rem; padding: .4rem .3rem; text-align: center; border: 2px solid; }
+    .tile .t-id { font-size: .75rem; font-weight: 700; letter-spacing: .03em; }
+    .tile .t-score { font-size: 1.35rem; font-weight: 800; line-height: 1.1; }
+    .tile .t-state { font-size: .7rem; font-weight: 600; }
+    .tile-counted { background: #c6f6d5; border-color: #38a169; color: #22543d; }
+    .tile-reused  { background: #fefcbf; border-color: #d69e2e; color: #744210; }
+    .tile-missed  { background: #fff5f5; border-color: #feb2b2; color: #9b2c2c; }
+    .legend-tile { display: inline-block; width: 1rem; height: 1rem; border-radius: .25rem; border: 2px solid; vertical-align: -3px; margin-right: .3rem; }
+    .ref-list li { margin-bottom: .2rem; }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="row">
-    <div class="col-12 mb-4">
-        <div class="d-flex justify-content-between align-items-center">
-            <h2 class="h4 fw-bold mb-0">
-                <i class="bi bi-bullseye me-2 text-primary"></i> Reference Coverage
-                {% if current_judge %}<span class="text-primary">{{ current_judge }}</span>{% endif %}
-            </h2>
-            {% if current %}
-            <a href="{{ url_for('main.download', format_type='coverage_csv') }}" class="btn btn-outline-success">
-                <i class="bi bi-download me-2"></i> Download CSV
-            </a>
-            {% endif %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+        <h2 class="h4 fw-bold mb-1"><i class="bi bi-bullseye me-2 text-primary"></i> Reference coverage</h2>
+        <div class="text-muted small">How many of the reference threats (for example, the expected threats of a
+            benchmark scenario) each source found.</div>
+    </div>
+    {% if current %}
+    <a href="{{ url_for('main.download', format_type='coverage_csv') }}" class="btn btn-outline-success">
+        <i class="bi bi-download me-2"></i> Download CSV
+    </a>
+    {% endif %}
+</div>
+
+{% if boards %}
+{% set first = boards[0] %}
+<!-- How it is counted -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-4 how-step"><div class="how-num">1</div>
+                <div class="small">For each reference threat, the judge scores <strong>every</strong> threat of a source
+                    ({{ first.sources[0].total }} &times; {{ first.sources[0].candidates }} = {{ first.sources[0].judgments }} judgments for {{ first.sources[0].source }}).</div></div>
+            <div class="col-md-4 how-step"><div class="how-num">2</div>
+                <div class="small">Only the <strong>best score</strong> counts. The reference threat is covered when it is
+                    {{ "%.2f"|format(first.threshold) }} or more.</div></div>
+            <div class="col-md-4 how-step"><div class="how-num">3</div>
+                <div class="small">Each threat of a source can cover <strong>only one</strong> reference threat, so a generic
+                    threat cannot be counted twice.</div></div>
         </div>
-        <p class="text-muted mb-0 mt-2">
-            Checks reference threats (for example the expected threats of a benchmark scenario) against the
-            threats found by the TMT and by the AI analysis. Reference threats have no dataflow or category,
-            so each one is judged against every threat of each source by description.
-        </p>
     </div>
 </div>
 
+<!-- Scoreboards, one per judge -->
+{% for b in boards %}
 <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">
+            Judge: <code>{{ b.judge }}</code>
+            {% if b.paid %}<span class="badge bg-dark ms-1">paid</span>{% else %}<span class="badge bg-light text-secondary border ms-1">local</span>{% endif %}
+            {% if loop.first %}<span class="badge bg-primary ms-1">latest</span>{% endif %}
+        </h5>
+        <div class="small text-muted">
+            <span class="legend-tile tile-counted"></span>covered
+            <span class="legend-tile tile-reused ms-2"></span>passes, but by a threat already used &mdash; not counted
+            <span class="legend-tile tile-missed ms-2"></span>not covered
+        </div>
+    </div>
+    <div class="card-body py-1">
+        {% for s in b.sources %}
+        <div class="board-row">
+            <div class="board-source">
+                <div class="fw-bold">{{ s.source }}</div>
+                <div class="board-score">{{ s.counted }} <small>/ {{ s.total }}</small></div>
+                <div class="small text-muted">{{ s.candidates }} threats, {{ s.judgments }} judgments</div>
+            </div>
+            <div class="tiles">
+                {% for t in s.tiles %}
+                <div class="tile tile-{{ t.state }}" title="{{ t.candidate[:300] }}">
+                    <div class="t-id">T{{ t.index }}</div>
+                    <div class="t-score">{{ "%.2f"|format(t.score) }}</div>
+                    <div class="t-state">
+                        {% if t.state == 'counted' %}&#10003; covered{% elif t.state == 'reused' %}&#8635; reused{% else %}&#10007; not covered{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+        {% if b.sources and b.sources|selectattr('reused')|list %}
+        <div class="small text-muted pb-2">
+            &#8635; <strong>reused</strong>: the best match of this reference threat is the same threat that already
+            covers another one. Counting it twice would reward generic wording, so it is not counted.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+<!-- Reference threats -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white"><h5 class="mb-0">Reference threats</h5></div>
+    <div class="card-body">
+        <ol class="ref-list small mb-0">
+            {% for e in expected %}<li><strong>T{{ e.index }}</strong> &mdash; {{ e.text }}</li>{% endfor %}
+        </ol>
+    </div>
+</div>
+
+<!-- Detail of the latest judge -->
+<h5 class="mt-4 mb-3">Why: the closest threat and the judge's explanation <small class="text-muted">(judge <code>{{ first.judge }}</code>)</small></h5>
+{% for e in expected %}
+<div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white">
-        <h5 class="mb-0">Reference threats</h5>
+        <h6 class="mb-0">T{{ e.index }}</h6>
+        <div class="text-muted small">{{ e.text }}</div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr class="small text-uppercase text-muted">
+                        <th style="width: 13%">Source</th><th style="width: 10%">Best score</th>
+                        <th style="width: 38%">Closest threat found</th><th style="width: 39%">Why the judge said so</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in first.sources %}{% for t in s.tiles if t.index == e.index %}
+                    <tr>
+                        <td class="fw-medium">{{ s.source }}</td>
+                        <td><span class="badge tile-{{ t.state }} border" style="font-size: .85rem">{{ "%.2f"|format(t.score) }}</span></td>
+                        <td>{{ t.candidate }}</td>
+                        <td class="text-muted">{{ t.explanation }}</td>
+                    </tr>
+                    {% endfor %}{% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- Run (again) -->
+<div class="card border-0 shadow-sm mb-4 {% if boards %}mt-5{% endif %}">
+    <div class="card-header bg-white">
+        <h5 class="mb-0">{% if boards %}Run again{% else %}Reference threats{% endif %}</h5>
     </div>
     <div class="card-body">
         <form method="POST">
@@ -92,138 +217,7 @@
     </div>
 </div>
 
-{% if comparison %}
-<div class="card border-0 shadow-sm mb-4">
-    <div class="card-header bg-white">
-        <h5 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i> Judge against judge</h5>
-        <small class="text-muted">Same threats, same criteria, different judge model.</small>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0 small">
-                <thead class="table-light">
-                    <tr class="small text-uppercase text-muted">
-                        <th>Reference</th>
-                        <th>Source</th>
-                        {% for judge in judges %}
-                        <th class="text-center">
-                            {{ judge }}
-                            {% if runs[judge].paid %}<span class="badge bg-dark ms-1">paid</span>{% endif %}
-                        </th>
-                        {% endfor %}
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in comparison %}
-                    <tr>
-                        <td class="fw-medium">T{{ row.expected_index }}</td>
-                        <td class="text-muted">{{ row.source }}</td>
-                        {% for judge in judges %}
-                        <td class="text-center">
-                            {% if judge in row.scores %}
-                                <span class="badge {% if row.covered[judge] %}bg-success{% elif row.scores[judge] >= 0.4 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
-                                    {{ "%.2f" | format(row.scores[judge]) }}
-                                </span>
-                            {% else %}
-                                <span class="text-muted">—</span>
-                            {% endif %}
-                        </td>
-                        {% endfor %}
-                    </tr>
-                    {% endfor %}
-                </tbody>
-                <tfoot class="table-light">
-                    <tr>
-                        <th colspan="2" class="text-end">Covered (each threat counted once)</th>
-                        {% for judge in judges %}
-                        <th class="text-center">
-                            {% for s in runs[judge].summary %}
-                                <div><small class="text-muted">{{ s.source }}</small>
-                                    <strong>{{ s.expected_covered_unique }}/{{ s.expected_total }}</strong></div>
-                            {% endfor %}
-                        </th>
-                        {% endfor %}
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
-
-{% if current %}
-<div class="row mb-4">
-    {% for row in current.summary %}
-    <div class="col-md-4">
-        <div class="card text-center summary-card border-primary">
-            <div class="card-body">
-                <h2 class="text-primary mb-1">{{ row.expected_covered_unique }} / {{ row.expected_total }}</h2>
-                <p class="card-text mb-1"><strong>{{ row.source }}</strong></p>
-                <p class="card-text text-muted mb-0">
-                    <small>
-                        {{ row.expected_covered }} / {{ row.expected_total }} counting a threat more than once<br>
-                        {{ row.candidates_matching_reference }} of {{ row.distinct_candidates }} threats match the reference
-                    </small>
-                </p>
-            </div>
-        </div>
-    </div>
-    {% endfor %}
-</div>
-<div class="alert alert-light border small">
-    <i class="bi bi-info-circle"></i> The headline number credits each threat at most once. The second line lets
-    the same threat cover two reference threats, which rewards generic wording.
-</div>
-
-{% for index, rows in current.rows | groupby('expected_index') %}
-<div class="card border-0 shadow-sm mb-3">
-    <div class="card-header bg-white">
-        <h6 class="mb-0">Reference threat {{ index }}</h6>
-        <div class="text-muted small">{{ rows[0].expected_threat }}</div>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0 small">
-                <thead class="table-light">
-                    <tr class="small text-uppercase text-muted">
-                        <th style="width: 12%">Source</th>
-                        <th style="width: 13%">Score</th>
-                        <th style="width: 37%">Closest threat found</th>
-                        <th style="width: 38%">Why the judge said so</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in rows %}
-                    <tr>
-                        <td class="fw-medium">{{ row.source }}</td>
-                        <td>
-                            <div class="progress" style="height: 20px;">
-                                <div class="progress-bar {% if row.covered %}bg-success{% elif row.best_score >= 0.4 %}bg-warning{% else %}bg-danger{% endif %}"
-                                     role="progressbar" style="width: {{ (row.best_score * 100) | round }}%">
-                                    {{ "%.2f" | format(row.best_score) }}
-                                </div>
-                            </div>
-                            <small class="{% if row.covered %}text-success{% else %}text-muted{% endif %}">
-                                {% if row.covered %}covered{% else %}not covered{% endif %}
-                            </small>
-                        </td>
-                        <td>{{ row.best_candidate }}</td>
-                        <td class="text-muted">{{ row.best_explanation }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endfor %}
-{% endif %}
-
-<div class="row mt-4">
-    <div class="col-12">
-        <a href="{{ url_for('main.results') }}" class="btn btn-secondary">
-            <i class="bi bi-arrow-left"></i> Back to Results
-        </a>
-    </div>
+<div class="mt-4">
+    <a href="{{ url_for('main.results') }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to Results</a>
 </div>
 {% endblock %}

@@ -115,6 +115,39 @@ class CoverageService:
         return pd.DataFrame(pair_rows), pd.DataFrame(coverage_rows)
 
     @staticmethod
+    def _max_assignment(pairs: pd.DataFrame, threshold: float) -> set:
+        """
+        Reference threats covered when each candidate may cover at most one of them.
+
+        Maximum bipartite matching (augmenting paths) between reference threats and
+        candidate threats, over the pairs whose score reaches the threshold.
+
+        Returns:
+            Set of covered reference indexes
+        """
+        if pairs.empty:
+            return set()
+        ok = pairs[pairs['similarity_score'] >= threshold]
+        options = {}
+        for _, row in ok.sort_values(['expected_index', 'similarity_score'], ascending=[True, False]).iterrows():
+            options.setdefault(int(row['expected_index']), []).append(row['candidate_threat'])
+        owner = {}  # candidate -> reference index it currently covers
+
+        def assign(ref, seen):
+            for cand in options.get(ref, []):
+                if cand in seen:
+                    continue
+                seen.add(cand)
+                if cand not in owner or assign(owner[cand], seen):
+                    owner[cand] = ref
+                    return True
+            return False
+
+        for ref in sorted(options):
+            assign(ref, set())
+        return set(owner.values())
+
+    @staticmethod
     def summarize(pairs_df: pd.DataFrame, coverage_df: pd.DataFrame,
                   threshold: float = DEFAULT_THRESHOLD) -> pd.DataFrame:
         """
@@ -140,23 +173,19 @@ class CoverageService:
 
             # One threat covering two different reference threats inflates the
             # score and rewards generic wording: a single "data may be sniffed"
-            # threat can be credited for every confidentiality expectation.
-            # Under unique assignment each candidate is credited at most once,
-            # taking its best match first.
-            covered_unique, used = set(), set()
-            if not pairs.empty:
-                for _, row in pairs.sort_values('similarity_score', ascending=False).iterrows():
-                    if row['similarity_score'] < threshold:
-                        break
-                    if row['expected_index'] in covered_unique or row['candidate_threat'] in used:
-                        continue
-                    covered_unique.add(row['expected_index'])
-                    used.add(row['candidate_threat'])
+            # threat could be credited for every confidentiality expectation.
+            # Under unique assignment each candidate is credited at most once.
+            # This is a maximum bipartite matching; a greedy pass by score is
+            # not enough, because the result then depends on how ties are
+            # ordered (a reference threat with several equal options can take
+            # the only option another one had).
+            covered_unique = CoverageService._max_assignment(pairs, threshold)
 
             rows.append({
                 'source': source,
                 'expected_covered': int(coverage['covered'].sum()),
                 'expected_covered_unique': len(covered_unique),
+                'covered_unique_ids': sorted(int(i) for i in covered_unique),
                 'expected_total': len(coverage),
                 'distinct_candidates': int(coverage['candidates'].max()) if len(coverage) else 0,
                 'candidates_matching_reference': int(matching)

@@ -13,6 +13,7 @@ from threat_modeling.services.rag_service import RAGService
 from threat_modeling.services.comparison_service import ComparisonService
 from threat_modeling.services.coverage_service import CoverageService, DEFAULT_THRESHOLD
 from threat_modeling.config.settings import PAID_PROVIDER, PAID_API_KEY, PAID_ANALYST_MODEL, PAID_JUDGE_MODEL
+from threat_modeling.web.result_views import analysis_overview, comparison_overview, coverage_tiles
 from threat_modeling.api.model_lister import list_openai_models, list_google_models, list_anthropic_models, list_ollama_models
 from threat_modeling.api.llm_client import LLMClient
 from threat_modeling.api.message_builder import generate_rag_messages
@@ -419,9 +420,12 @@ def results():
     analysis_df = session.get('analysis_df', [])
     results_data = session.get('analysis_results', [])
 
+    overview = analysis_overview(analysis_df, [i.get('data_flow') for i in session.get('json_data', [])])
+
     return render_template('results.html',
                          analysis_df=analysis_df,
                          results_data=results_data,
+                         overview=overview,
                          model_name=session.get('selected_model', 'unknown'))
 
 
@@ -506,10 +510,19 @@ def compare():
 
         tmt_only = comparison_df[comparison_df['source'] == 'tmt_only'].copy()
         ai_only = comparison_df[comparison_df['source'] == 'ai_only'].copy()
+        pairs = comparison_df[comparison_df['source'] == 'both']
+        rejected_threats = pairs[pairs['is_similar'] != True].copy()
+
+        # Totals with their parts, in one unit each (threats or pairs), for the charts
+        overview = comparison_overview(
+            tmt_threats_df.to_dict('records'), analysis_df.to_dict('records'),
+            comparison_df.to_dict('records'), [f.name for f in selected_diagram.dataflows])
 
         # Convert to dict for template
         return render_template('compare.html',
+                             overview=overview,
                              similar_threats=similar_threats.to_dict('records'),
+                             rejected_threats=rejected_threats.to_dict('records'),
                              tmt_only=tmt_only.to_dict('records'),
                              ai_only=ai_only.to_dict('records'),
                              model_name=session.get('selected_model', ''),
@@ -715,7 +728,22 @@ def coverage():
 
     runs = session.get('coverage_runs', {})
     last = session.get('coverage_last')
+    # One scoreboard per judge that has run, the latest first
+    ordem = ([last] if last in runs else []) + [j for j in runs if j != last]
+    boards = [{'judge': j, 'paid': runs[j].get('paid', False),
+               'threshold': runs[j].get('threshold', DEFAULT_THRESHOLD),
+               'sources': coverage_tiles(runs[j].get('rows', []), runs[j].get('summary', []),
+                                         runs[j].get('threshold', DEFAULT_THRESHOLD))}
+              for j in ordem]
+    expected = []
+    if last in runs:
+        vistos = {}
+        for r in runs[last].get('rows', []):
+            vistos.setdefault(int(r['expected_index']), r['expected_threat'])
+        expected = [{'index': i, 'text': t} for i, t in sorted(vistos.items())]
     return render_template('coverage.html',
+                           boards=boards,
+                           expected=expected,
                            form=form,
                            runs=runs,
                            judges=list(runs.keys()),

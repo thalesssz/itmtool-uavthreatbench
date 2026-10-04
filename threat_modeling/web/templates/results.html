@@ -41,6 +41,39 @@
 <div class="tab-content" id="resultsTabsContent">
     <!-- LLM Results Tab -->
     <div class="tab-pane fade show active" id="llm-results" role="tabpanel">
+        {% if overview %}
+        <!-- At a glance -->
+        <div class="row g-4 mb-4">
+            <div class="col-lg-4">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body">
+                        <div class="glance-num">{{ overview.total }}</div>
+                        <div class="text-muted mb-3">threats found by <code>{{ model_name }}</code></div>
+                        <div class="glance-line"><strong>{{ overview.flows_with_threats }}</strong> of {{ overview.flows_total }} data flows have at least one threat</div>
+                        <div class="glance-line"><strong>{{ overview.categories_with_threats }}</strong> of 6 STRIDE categories appear</div>
+                        {% if overview.flows_without_threats %}
+                        <div class="small text-danger mt-2">No threat on: {{ overview.flows_without_threats | join(', ') }}</div>
+                        {% endif %}
+                        <div class="small text-muted mt-3">The analysis makes one call per data flow of the DFD; each call can return zero or more threats.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-8">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-header bg-white"><h6 class="mb-0">Threats by STRIDE category <small class="text-muted fw-normal">&mdash; the counts add up to {{ overview.total }}</small></h6></div>
+                    <div class="card-body">
+                        {% for c in overview.categories %}
+                        <div class="cat-row">
+                            <div class="cat-name"><span class="cat-letter">{{ c.short }}</span> {{ c.name }}</div>
+                            <div class="cat-track"><div class="cat-bar" style="width: {{ c.width }}%"></div></div>
+                            <div class="cat-count {% if not c.count %}text-danger{% endif %}">{{ c.count if c.count else '0 — none' }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">Detected Threats - <span class="text-primary">{{ model_name }}</span></h5>
@@ -356,6 +389,14 @@ document.addEventListener('DOMContentLoaded', function() {
 .bg-light-success { background-color: rgba(56, 161, 105, 0.05); }
 .bg-light-warning { background-color: rgba(236, 201, 75, 0.05); }
 .results-table { max-height: 600px; overflow-y: auto; }
+.glance-num { font-size: 3rem; font-weight: 800; line-height: 1; color: var(--ita-blue); }
+.glance-line { font-size: .95rem; margin-bottom: .25rem; }
+.cat-row { display: flex; align-items: center; gap: .75rem; margin-bottom: .45rem; }
+.cat-name { flex: 0 0 13rem; font-size: .9rem; }
+.cat-letter { display: inline-block; width: 1.4rem; text-align: center; font-weight: 800; color: var(--ita-blue); }
+.cat-track { flex: 1; height: 1.1rem; background: var(--ita-border); border-radius: .3rem; overflow: hidden; }
+.cat-bar { height: 100%; background: #3182ce; border-radius: .3rem; }
+.cat-count { flex: 0 0 5rem; font-weight: 700; font-size: .9rem; }
 .nav-tabs .nav-link { border: none; color: #718096; font-weight: 600; padding: 1rem 1.5rem; }
 .nav-tabs .nav-link.active { color: var(--ita-blue); border-bottom: 3px solid var(--ita-blue); background: none; }
 .nav-tabs .nav-link:hover:not(.active):not(.disabled) { color: var(--ita-blue-light); border-bottom: 3px solid var(--ita-border); }
