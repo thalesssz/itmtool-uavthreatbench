@@ -68,6 +68,8 @@
             Judge: <code>{{ b.judge }}</code>
             {% if b.paid %}<span class="badge bg-dark ms-1">paid</span>{% else %}<span class="badge bg-light text-secondary border ms-1">local</span>{% endif %}
             {% if loop.first %}<span class="badge bg-primary ms-1">latest</span>{% endif %}
+            {% if b.note %}<div class="text-muted fw-normal mt-1" style="font-size:.85rem"><i class="bi bi-stopwatch me-1"></i>{{ b.note }}</div>{% endif %}
+            {% if b.failed %}<div class="text-danger fw-bold mt-1" style="font-size:.85rem"><i class="bi bi-exclamation-triangle me-1"></i>{{ b.failed }} judgment(s) failed and count as score 0: run again to retry only these.</div>{% endif %}
         </h5>
         <div class="small text-muted">
             <span class="legend-tile tile-counted"></span>covered
@@ -179,6 +181,10 @@
                 <div class="col-md-2">
                     <label for="threshold" class="form-label small fw-bold">Score threshold</label>
                     {{ form.threshold(class="form-control form-control-sm", step="0.05", min="0", max="1") }}
+                    <div class="form-check mt-2" title="Judgments already made with the same judge and the same text are reused. Tick to ask the judge again.">
+                        <input class="form-check-input" type="checkbox" name="fresh" value="1" id="fresh">
+                        <label class="form-check-label small" for="fresh">Judge everything again</label>
+                    </div>
                 </div>
                 <div class="col-md-3">
                     <label for="judge_model" class="form-label small fw-bold">Paid judge model</label>
@@ -210,8 +216,9 @@
                     Local mode: <code>{{ local_model }}</code> writes the threats and also judges them. Run the paid
                     judge too to compare the two.
                 {% endif %}
-                One call per reference threat and distinct threat of each source, so this takes minutes:
-                keep the tab open.
+                One judgment per reference threat and distinct threat of each source. The paid judge runs
+                several calls at once; the local model runs one at a time, so a local run takes minutes:
+                keep the tab open. Pairs already judged by the same judge come from memory.
             </div>
         </form>
     </div>

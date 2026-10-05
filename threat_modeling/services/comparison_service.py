@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 from ..api.llm_client import LLMClient
 from ..api.message_builder import generate_comparison_messages
 from ..models.comparison_models import ThreatComparisonResponse
+from .judging import judge_all
 
 
 class ComparisonService:
@@ -12,7 +13,7 @@ class ComparisonService:
 
     def __init__(self):
         """Initialize the comparison service."""
-        pass
+        self.last_stats = {}
     
     def prepare_comparison_data(self, tmt_threats_df: pd.DataFrame, ai_results_df: pd.DataFrame) -> Tuple[List[Dict], List[Dict], List[Tuple]]:
         """
@@ -141,10 +142,10 @@ class ComparisonService:
     
     def run_comparison(self, tmt_threats_df: pd.DataFrame, ai_results_df: pd.DataFrame,
                       provider: str, model_name: str, api_key: Optional[str] = None,
-                      server_ip: Optional[str] = None) -> pd.DataFrame:
+                      server_ip: Optional[str] = None, use_cache: bool = True) -> pd.DataFrame:
         """
         Run complete comparison between TMT threats and AI analysis results.
-        
+
         Args:
             tmt_threats_df: DataFrame with TMT threats
             ai_results_df: DataFrame with AI results
@@ -152,17 +153,22 @@ class ComparisonService:
             model_name: Model name to use
             api_key: API key (optional)
             server_ip: Server IP for Ollama (optional)
-            
+            use_cache: Reuse remembered judgments (False judges everything again)
+
         Returns:
             DataFrame with comparison results containing columns:
             - dataflow_name, category
             - tmt_description, ai_description
             - is_similar, similarity_score, explanation
             - source: "both", "tmt_only", "ai_only"
+            - answered_by, from_cache, error (judged pairs)
+
+        After the run, self.last_stats holds the counts of judgments made now,
+        reused from memory and failed, with the time and the cost.
         """
         # Prepare data
         tmt_only, ai_only, pairs_to_compare = self.prepare_comparison_data(tmt_threats_df, ai_results_df)
-        
+
         # Initialize LLM client
         llm_client = LLMClient(
             provider=provider,
@@ -170,38 +176,33 @@ class ComparisonService:
             api_key=api_key,
             server_ip=server_ip
         )
-        
-        # Compare pairs
-        comparison_results = []
-        
+
+        # Same messages as compare_threats_pair, judged together (memory, parallel calls)
+        message_lists = []
         for tmt_threat, ai_threat in pairs_to_compare:
-            try:
-                comparison = self.compare_threats_pair(tmt_threat, ai_threat, llm_client)
-                
-                comparison_results.append({
-                    'dataflow_name': tmt_threat.get('dataflow_name', '') or ai_threat.get('dataflow_name', ''),
-                    'category': tmt_threat.get('category', '') or ai_threat.get('category', ''),
-                    'tmt_description': tmt_threat.get('description', ''),
-                    'ai_description': ai_threat.get('description', ''),
-                    'is_similar': comparison.is_similar,
-                    'similarity_score': comparison.similarity_score,
-                    'explanation': comparison.explanation,
-                    'source': 'both'
-                })
-            except Exception as e:
-                print(f"Error comparing threats: {str(e)}")
-                # Add with unknown similarity
-                comparison_results.append({
-                    'dataflow_name': tmt_threat.get('dataflow_name', '') or ai_threat.get('dataflow_name', ''),
-                    'category': tmt_threat.get('category', '') or ai_threat.get('category', ''),
-                    'tmt_description': tmt_threat.get('description', ''),
-                    'ai_description': ai_threat.get('description', ''),
-                    'is_similar': False,
-                    'similarity_score': 0.0,
-                    'explanation': f'Error during comparison: {str(e)}',
-                    'source': 'both'
-                })
-        
+            message_lists.append(generate_comparison_messages(
+                tmt_threat.get('description', ''), ai_threat.get('description', ''),
+                tmt_threat.get('category', '') or ai_threat.get('category', ''),
+                tmt_threat.get('dataflow_name', '') or ai_threat.get('dataflow_name', '')))
+        results, self.last_stats = judge_all(llm_client, message_lists, kind='comparison',
+                                             use_cache=use_cache, label='comparison')
+
+        comparison_results = []
+        for (tmt_threat, ai_threat), result in zip(pairs_to_compare, results):
+            comparison_results.append({
+                'dataflow_name': tmt_threat.get('dataflow_name', '') or ai_threat.get('dataflow_name', ''),
+                'category': tmt_threat.get('category', '') or ai_threat.get('category', ''),
+                'tmt_description': tmt_threat.get('description', ''),
+                'ai_description': ai_threat.get('description', ''),
+                'is_similar': result['is_similar'],
+                'similarity_score': result['similarity_score'],
+                'explanation': result['explanation'],
+                'source': 'both',
+                'answered_by': result['answered_by'],
+                'from_cache': result['from_cache'],
+                'error': result['error']
+            })
+
         # Add TMT-only threats
         for threat in tmt_only:
             comparison_results.append({

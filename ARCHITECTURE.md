@@ -96,7 +96,8 @@ itmt_/
     │   ├── analysis_service.py      # Run analysis, build DataFrame from results
     │   ├── rag_service.py           # ChromaDB search, RAG enhance, parse RAGResponse
     │   ├── comparison_service.py    # Compare TMT vs AI threats, LLM-based similarity
-    │   └── coverage_service.py      # Reference coverage across threat sources (LLM judge)
+    │   ├── coverage_service.py      # Reference coverage across threat sources (LLM judge)
+    │   └── judging.py               # Runs many judge calls: memory, parallel calls, failures reported
     ├── web/
     │   ├── __init__.py
     │   ├── app.py            # create_app(): Flask factory, session, blueprint
@@ -131,10 +132,11 @@ itmt_/
 - **RAGService**: Connects to ChromaDB (HTTP client); uses configurable embeddings (Ollama, OpenAI, Google); similarity search; RAG enhancement uses `generate_rag_messages` and `LLMClient.invoke_with_structure(RAGResponse)`; parses response to NIST control list.
 - **ComparisonService**: Pairs TMT and AI threats by (dataflow, category); for each pair calls LLM with `generate_comparison_messages` and `invoke_with_structure(ThreatComparisonResponse)`; builds DataFrame with similarity and source (both / tmt_only / ai_only).
 - **CoverageService**: Checks a reference threat list (e.g. the expected threats of a benchmark scenario) against any number of threat sources (TMT threats from the .tm7, AI analysis exports, other pipelines). No dataflow/category key: every reference threat is judged against every distinct threat of each source with `generate_coverage_messages` and `invoke_with_structure(ThreatComparisonResponse)`; a reference threat is covered by a source when its best score reaches the threshold (default 0.7). Exposed through `python -m threat_modeling.coverage_cli`.
+- **judging** (`judge_all`, `JudgmentCache`): shared by ComparisonService and CoverageService. Judgments already made are read from a SQLite memory in `DATA_DIR` (key: provider, model, temperature, seed and the full prompt text, so any change in prompt, scenario description or threat text is a new judgment); identical prompts in a run are judged once; the rest run through `LLMClient.map_ordered` (in parallel for paid providers, one at a time for Ollama), with retries. A call that still fails is reported (`error`, a warning on screen) and not remembered, so running again retries only it. Each judgment records the model that answered, its call id, cost (OpenRouter reports it) and time. Measured on CS-OT-UAV-0287 (695 judgments): about 2 min in parallel against about 15 min in a row, same coverage tiles; a repeated run takes 1.5 s from memory. Study: `Thales/tmt/docs/ESTUDO-OTIMIZACAO-AVALIACAO.md` in the UAVThreatBench-ITA repository.
 
 ### 3. API and Models
 
-- **LLMClient** (`threat_modeling.api.llm_client`): Single interface for OpenAI, Google, Anthropic, Ollama. Methods: `invoke`, `invoke_batch`, `invoke_with_structure(pydantic_model)`.
+- **LLMClient** (`threat_modeling.api.llm_client`): Single interface for OpenAI, Google, Anthropic, Ollama. Methods: `invoke`, `invoke_batch` (parallel for paid providers, input order kept), `invoke_with_structure(pydantic_model)`, `invoke_with_structure_meta` (also returns the model that answered, call id and cost), `with_retries`, `map_ordered`; `concurrency` is 1 for Ollama and `LLM_MAX_CONCURRENCY` otherwise.
 - **message_builder**: Builds system/human messages for: main analysis (with system description and JSON output format), few-shot, chain-of-thought, RAG (NIST selection), and comparison (similarity + explanation).
 - **model_lister**: Lists models for OpenAI and Google via their APIs; returns fixed list for Anthropic.
 - **threat_model (dataclasses)**: `ThreatModelTM7`, `DiagramTM7`, `ElementTM7`, `DataFlowTM7`, `TrustBoundaryTM7`, `ThreatTM7`, `PropertyTM7`.
@@ -143,7 +145,7 @@ itmt_/
 
 ### 4. Configuration
 
-- **settings.py**: Reads from environment: API keys (OpenAI, Google), Ollama URL, default provider/model; sampling (`LLM_TEMPERATURE`, default 0, and `LLM_SEED`, default 42, applied to every provider that supports them; empty value = provider default); RAG (Chroma host/port/SSL, collection name, embedding provider/model); `DATA_DIR`, `BLOCKS_DIR`.
+- **settings.py**: Reads from environment: API keys (OpenAI, Google), Ollama URL, default provider/model; sampling (`LLM_TEMPERATURE`, default 0, and `LLM_SEED`, default 42, applied to every provider that supports them; empty value = provider default); RAG (Chroma host/port/SSL, collection name, embedding provider/model); `DATA_DIR`, `BLOCKS_DIR`; throughput (`LLM_MAX_CONCURRENCY`, default 8, paid providers only; `LLM_MAX_RETRIES`, default 3); judgment memory (`JUDGMENT_CACHE_PATH`, default `DATA_DIR/judgment_cache.sqlite`, empty = off).
 - **Environment**: Use `example_env` as template; copy to `.env` and set keys and optional overrides.
 
 ## Data Flows
@@ -168,13 +170,13 @@ itmt_/
 
 1. From results, user opens /compare.
 2. TMT threats for selected diagram and AI results DataFrame are passed to `ComparisonService.run_comparison`.
-3. Pairs (TMT, AI) by (dataflow, category); each pair → comparison messages → `invoke_with_structure(ThreatComparisonResponse)`.
+3. Pairs (TMT, AI) by (dataflow, category); each pair → comparison messages → `judge_all` (memory, parallel calls, retries) → `ThreatComparisonResponse`.
 4. DataFrame with similar, TMT-only, AI-only; comparison CSV download.
 
 ### Coverage flow (CLI)
 
 1. `coverage_cli` loads the reference threats and scenario description from a scenario JSON, the TMT threats saved in a .tm7, and extra sources from .txt/.csv/.json files.
-2. `CoverageService.run_coverage`: for each reference threat × source × distinct candidate text → coverage messages → `invoke_with_structure(ThreatComparisonResponse)`.
+2. `CoverageService.run_coverage`: for each reference threat × source × distinct candidate text → coverage messages → `judge_all` (memory, parallel calls, retries) → `ThreatComparisonResponse`. `--fresh` judges everything again instead of reusing the memory.
 3. Outputs (tab-separated): `<out>-pairs.csv` (every judgment), `<out>-coverage.csv` (best score and covered flag per reference threat and source), `<out>-summary.csv` (covered count per source).
 
 ## Parsing flow (.tm7)

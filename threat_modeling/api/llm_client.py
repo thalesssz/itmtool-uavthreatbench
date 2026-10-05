@@ -1,5 +1,7 @@
 """LLM Client - Abstract interface for multi-provider LLM calls."""
-from typing import List, Optional, Type, TypeVar
+import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Dict, List, Optional, Tuple, Type, TypeVar
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel
 
@@ -7,7 +9,7 @@ from .providers.openai_provider import create_openai_client
 from .providers.google_provider import create_google_client
 from .providers.ollama_provider import create_ollama_client
 from .providers.anthropic_provider import create_anthropic_client
-from ..config.settings import DEFAULT_MODEL, DEFAULT_PROVIDER
+from ..config.settings import DEFAULT_MODEL, DEFAULT_PROVIDER, LLM_MAX_CONCURRENCY, LLM_MAX_RETRIES
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -66,6 +68,31 @@ class LLMClient:
         
         return model
     
+    @property
+    def concurrency(self) -> int:
+        """How many calls may run at once: one for a local Ollama, LLM_MAX_CONCURRENCY otherwise."""
+        return 1 if self.provider == "OLLAMA" else max(1, LLM_MAX_CONCURRENCY)
+
+    @staticmethod
+    def with_retries(call: Callable[[], T], retries: int = LLM_MAX_RETRIES) -> T:
+        """Run call(), retrying with a growing wait (2 s, 4 s, ...) and re-raising the last error."""
+        for attempt in range(1, max(1, retries) + 1):
+            try:
+                return call()
+            except Exception as e:
+                if attempt >= retries:
+                    raise
+                print(f"LLM call failed (attempt {attempt}/{retries}): {str(e)[:200]}")
+                time.sleep(2 ** attempt)
+
+    def map_ordered(self, function: Callable, items: List) -> List:
+        """Apply function to every item, up to self.concurrency at a time, keeping the input order."""
+        self._get_model()  # build the client once, before any thread uses it
+        if self.concurrency == 1 or len(items) < 2:
+            return [function(item) for item in items]
+        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+            return list(pool.map(function, items))
+
     def invoke(self, messages: List[BaseMessage]):
         """
         Invoke the LLM with a list of messages.
@@ -90,18 +117,32 @@ class LLMClient:
         Returns:
             List of LLM responses
         """
-        results = []
         model = self._get_model()
-        
-        for i, messages in enumerate(messages_list):
+
+        def run(item):
+            i, messages = item
             if verbose:
                 print(f"Generating Results for Message {i+1}")
-            result = model.invoke(messages)
-            results.append(result)
-        
-        return results
+            return self.with_retries(lambda: model.invoke(messages))
+
+        return self.map_ordered(run, list(enumerate(messages_list)))
     
     def invoke_with_structure(self, messages: List[BaseMessage], pydantic_model: Type[T]) -> T:
+        """Invoke the LLM and return the response as an instance of pydantic_model."""
+        return self.invoke_with_structure_meta(messages, pydantic_model)[0]
+
+    @staticmethod
+    def response_meta(raw) -> Dict:
+        """Model that actually answered, call id and cost (OpenRouter reports it), when the provider says."""
+        metadata = getattr(raw, 'response_metadata', None) or {}
+        usage = metadata.get('token_usage') or {}
+        return {
+            'model': metadata.get('model_name') or metadata.get('model') or '',
+            'call_id': metadata.get('id') or getattr(raw, 'id', '') or '',
+            'cost': usage.get('cost'),
+        }
+
+    def invoke_with_structure_meta(self, messages: List[BaseMessage], pydantic_model: Type[T]) -> Tuple[T, Dict]:
         """
         Invoke the LLM with structured output using Pydantic model.
         
@@ -114,8 +155,8 @@ class LLMClient:
             pydantic_model: Pydantic BaseModel class to structure the response
             
         Returns:
-            Instance of the Pydantic model with validated data
-            
+            (instance of the Pydantic model with validated data, response_meta dict)
+
         Raises:
             ValueError: If the response cannot be parsed into the Pydantic model
         """
@@ -131,13 +172,16 @@ class LLMClient:
             base_model = model
         
         try:
-            # Apply structured output to the base model
-            structured_model = base_model.with_structured_output(pydantic_model)
-            
+            # Apply structured output to the base model. include_raw only keeps
+            # the provider's response next to the parsed one; the request is the same.
+            structured_model = base_model.with_structured_output(pydantic_model, include_raw=True)
+
             # Invoke with structured output
-            result = structured_model.invoke(messages)
-            
-            return result
+            output = structured_model.invoke(messages)
+            if output.get('parsed') is None:
+                raise ValueError(output.get('parsing_error') or 'Empty structured output')
+
+            return output['parsed'], self.response_meta(output.get('raw'))
             
         except Exception as e:
             # Fallback: try to parse manually if structured output fails
@@ -170,7 +214,7 @@ class LLMClient:
                 # Parse JSON and create Pydantic model
                 if json_str:
                     response_dict = json.loads(json_str)
-                    return pydantic_model(**response_dict)
+                    return pydantic_model(**response_dict), self.response_meta(raw_response)
                 else:
                     raise ValueError("Empty response from LLM")
                 

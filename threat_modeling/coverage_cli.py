@@ -107,6 +107,7 @@ def main():
     parser.add_argument('--api-key', default=None)
     parser.add_argument('--threshold', type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument('--no-context', action='store_true', help='Do not show the scenario description to the judge')
+    parser.add_argument('--fresh', action='store_true', help='Judge everything again instead of reusing remembered judgments')
     parser.add_argument('--out', required=True, help='Output prefix for the CSV files')
     args = parser.parse_args()
 
@@ -134,8 +135,15 @@ def main():
         server_ip=None,
         scenario_context='' if args.no_context else context,
         threshold=args.threshold,
-        verbose=True
+        verbose=False,
+        use_cache=not args.fresh
     )
+    stats = service.last_stats
+    print(f"\n{stats['total']} judgments: {stats['judged']} judged now, {stats['reused']} from memory, "
+          f"{stats['failed']} failed, {stats['seconds']} s"
+          + (f", US$ {stats['cost']:.4f}" if stats.get('cost') is not None else ''))
+    if stats['failed']:
+        print("WARNING: failed judgments count as score 0. Run again to retry only them.")
     summary_df = CoverageService.summarize(pairs_df, coverage_df, args.threshold)
 
     pairs_df.to_csv(f"{args.out}-pairs.csv", index=False, sep='\t')

@@ -47,6 +47,7 @@
             Diagram: <strong>{{ diagram_name }}</strong><br>
             Analyst: <code>{{ model_name }}</code> &middot; Judge: <code>{{ judge_name }}</code>
             {% if judge_name == model_name %}<span class="badge bg-light text-secondary border ms-1">same model: local mode</span>{% endif %}
+            {% if judge_note %}<br><i class="bi bi-stopwatch me-1"></i>{{ judge_note }}{% endif %}
         </div>
     </div>
     <a href="{{ url_for('main.download', format_type='comparison_csv') }}" class="btn btn-success">

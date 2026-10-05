@@ -39,3 +39,13 @@ FLASK_SECRET_KEY=change-me-in-production
 # PAID_API_KEY=                         # falls back to OPENAI_API_KEY
 # PAID_ANALYST_MODEL=openai/gpt-5
 # PAID_JUDGE_MODEL=google/gemini-2.5-flash
+
+# --- Throughput and judgment memory ---
+# Paid providers run up to LLM_MAX_CONCURRENCY calls at once (a local Ollama
+# always runs one at a time). Failed calls are retried LLM_MAX_RETRIES times
+# and then shown on screen, never turned into a silent score of 0.
+# LLM_MAX_CONCURRENCY=8
+# LLM_MAX_RETRIES=3
+# Judgments are remembered here (same judge + same prompt text = same answer).
+# Empty turns the memory off.
+# JUDGMENT_CACHE_PATH=./data/judgment_cache.sqlite

@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..api.llm_client import LLMClient
 from ..api.message_builder import generate_coverage_messages
-from ..models.comparison_models import ThreatComparisonResponse
+from .judging import judge_all
 
 
 DEFAULT_THRESHOLD = 0.7
@@ -24,13 +24,13 @@ class CoverageService:
 
     def __init__(self):
         """Initialize the coverage service."""
-        pass
+        self.last_stats = {}
 
     def run_coverage(self, expected_threats: List[str], sources: Dict[str, List[str]],
                      provider: str, model_name: str, api_key: Optional[str] = None,
                      server_ip: Optional[str] = None, scenario_context: str = "",
                      threshold: float = DEFAULT_THRESHOLD,
-                     verbose: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                     verbose: bool = False, use_cache: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Judge every reference threat against every threat of every source.
 
@@ -44,13 +44,18 @@ class CoverageService:
             scenario_context: Scenario description shown to the judge (optional)
             threshold: Minimum score for a reference threat to count as covered
             verbose: Print progress
+            use_cache: Reuse remembered judgments (False judges everything again)
 
         Returns:
             Tuple (pairs_df, coverage_df):
             - pairs_df: one row per (reference threat, source, distinct candidate text)
-              with similarity_score, is_similar and explanation
+              with similarity_score, is_similar and explanation, plus who answered,
+              the cost, whether it came from memory and any error
             - coverage_df: one row per (reference threat, source) with best_score,
               covered, matches_at_threshold and the best candidate
+
+        After the run, self.last_stats holds the counts of judgments made now,
+        reused from memory and failed, with the time and the cost.
         """
         llm_client = LLMClient(
             provider=provider,
@@ -59,44 +64,45 @@ class CoverageService:
             server_ip=server_ip
         )
 
-        pair_rows = []
-        coverage_rows = []
-
+        # Every (reference threat, source, candidate) to judge, in a fixed order.
+        # Identical texts get identical scores, so each distinct text is judged once.
+        jobs = []
         for expected_index, expected in enumerate(expected_threats, start=1):
             for source, candidates in sources.items():
-                # Identical texts get identical scores, so each distinct text is judged once.
                 distinct = list(dict.fromkeys(c.strip() for c in candidates if c and c.strip()))
-                source_rows = []
-
                 for candidate_index, candidate in enumerate(distinct, start=1):
-                    try:
-                        messages = generate_coverage_messages(expected, candidate, scenario_context)
-                        response = llm_client.invoke_with_structure(messages, ThreatComparisonResponse)
-                        score = response.similarity_score
-                        is_similar = response.is_similar
-                        explanation = response.explanation
-                    except Exception as e:
-                        print(f"Error judging coverage: {str(e)}")
-                        score, is_similar = 0.0, False
-                        explanation = f'Error during coverage judgment: {str(e)}'
+                    jobs.append((expected_index, expected, source, candidate_index, candidate))
 
-                    row = {
-                        'expected_index': expected_index,
-                        'expected_threat': expected,
-                        'source': source,
-                        'candidate_index': candidate_index,
-                        'candidate_threat': candidate,
-                        'similarity_score': score,
-                        'is_similar': is_similar,
-                        'explanation': explanation
-                    }
-                    source_rows.append(row)
+        results, self.last_stats = judge_all(
+            llm_client,
+            [generate_coverage_messages(job[1], job[4], scenario_context) for job in jobs],
+            kind='coverage', use_cache=use_cache, label='coverage')
 
-                    if verbose:
-                        print(f"  T{expected_index} x {source} #{candidate_index}/{len(distinct)}: {score:.2f}")
+        pair_rows = []
+        for (expected_index, expected, source, candidate_index, candidate), result in zip(jobs, results):
+            pair_rows.append({
+                'expected_index': expected_index,
+                'expected_threat': expected,
+                'source': source,
+                'candidate_index': candidate_index,
+                'candidate_threat': candidate,
+                'similarity_score': result['similarity_score'],
+                'is_similar': result['is_similar'],
+                'explanation': result['explanation'],
+                'answered_by': result['answered_by'],
+                'judged_at': result['judged_at'],
+                'cost': result['cost'],
+                'from_cache': result['from_cache'],
+                'error': result['error']
+            })
+            if verbose:
+                print(f"  T{expected_index} x {source} #{candidate_index}: {result['similarity_score']:.2f}")
 
-                pair_rows.extend(source_rows)
-
+        coverage_rows = []
+        for expected_index, expected in enumerate(expected_threats, start=1):
+            for source in sources:
+                source_rows = [r for r in pair_rows
+                               if r['expected_index'] == expected_index and r['source'] == source]
                 # "covered" follows the score, not the judge's boolean, so one
                 # threshold rules every source even if the judge is inconsistent.
                 best = max(source_rows, key=lambda r: r['similarity_score'], default=None)
@@ -104,12 +110,13 @@ class CoverageService:
                     'expected_index': expected_index,
                     'expected_threat': expected,
                     'source': source,
-                    'candidates': len(distinct),
+                    'candidates': len(source_rows),
                     'best_score': best['similarity_score'] if best else 0.0,
                     'covered': bool(best and best['similarity_score'] >= threshold),
                     'matches_at_threshold': sum(1 for r in source_rows if r['similarity_score'] >= threshold),
                     'best_candidate': best['candidate_threat'] if best else '',
-                    'best_explanation': best['explanation'] if best else ''
+                    'best_explanation': best['explanation'] if best else '',
+                    'failed': sum(1 for r in source_rows if r['error'])
                 })
 
         return pd.DataFrame(pair_rows), pd.DataFrame(coverage_rows)

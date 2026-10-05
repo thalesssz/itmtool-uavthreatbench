@@ -2,6 +2,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, send_file, jsonify
 import json
 import os
+import time
 import tempfile
 import pandas as pd
 from io import BytesIO
@@ -291,6 +292,29 @@ def _judge_config():
             session.get('api_key', None))
 
 
+def _run_note(stats):
+    """One line on how a judging run went: judged now, from memory, failed, time and cost."""
+    if not stats:
+        return ''
+    minutes, seconds = divmod(int(round(stats.get('seconds', 0))), 60)
+    parts = [f"{stats['total']} judgments",
+             f"{stats['judged']} judged now",
+             f"{stats['reused']} from memory"]
+    if stats.get('failed'):
+        parts.append(f"{stats['failed']} failed")
+    parts.append(f"{minutes} min {seconds:02d} s" if minutes else f"{seconds} s")
+    if stats.get('cost') is not None:
+        parts.append(f"US$ {stats['cost']:.4f}")
+    return ' · '.join(parts)
+
+
+def _flash_failures(stats):
+    """A failed judgment counts as score 0, so the screen must say it, not hide it."""
+    if stats and stats.get('failed'):
+        flash(f"{stats['failed']} judgment(s) failed after retries and count as score 0. "
+              f"Run again: everything else comes from memory, so only these are retried.", 'error')
+
+
 @main_bp.route('/analyze', methods=['GET', 'POST'])
 def analyze():
     """Render analysis form (provider, model, API key, few-shot, CoT); on POST, run analysis and redirect to results."""
@@ -372,6 +396,7 @@ def analyze():
 
             # Run analysis
             analysis_service = AnalysisService()
+            started = time.time()
             results = analysis_service.run_analysis(
                 interactions=json_data,
                 system_description=system_desc,
@@ -398,7 +423,8 @@ def analyze():
             session['analysis_df'] = df.to_dict('records')
             session['analysis_complete'] = True
 
-            flash(f'Analysis completed successfully with {model_option}!', 'success')
+            flash(f'Analysis completed successfully with {model_option} '
+                  f'({len(results)} calls in {time.time() - started:.0f} s)!', 'success')
             return redirect(url_for('main.results'))
 
         except Exception as e:
@@ -503,6 +529,8 @@ def compare():
 
             # Store in session
             session[comparison_key] = comparison_df.to_dict('records')
+            session[comparison_key + '_stats'] = comparison_service.last_stats
+            _flash_failures(comparison_service.last_stats)
 
         # Separate results by source
         similar_threats = comparison_df[comparison_df['source'] == 'both'].copy()
@@ -527,6 +555,7 @@ def compare():
                              ai_only=ai_only.to_dict('records'),
                              model_name=session.get('selected_model', ''),
                              judge_name=model_name,
+                             judge_note=_run_note(session.get(comparison_key + '_stats')),
                              diagram_name=threat_model.diagrams[diagram_index].name)
 
     except Exception as e:
@@ -697,7 +726,8 @@ def coverage():
                 api_key=api_key,
                 server_ip=None,
                 scenario_context=session.get('system_description', ''),
-                threshold=threshold
+                threshold=threshold,
+                use_cache=request.form.get('fresh') != '1'
             )
             summary_df = CoverageService.summarize(pairs_df, coverage_df, threshold)
 
@@ -706,7 +736,8 @@ def coverage():
                 'rows': coverage_df.to_dict('records'),
                 'summary': summary_df.to_dict('records'),
                 'threshold': threshold,
-                'paid': run_paid
+                'paid': run_paid,
+                'stats': coverage_service.last_stats
             }
             session['coverage_runs'] = runs
             session['coverage_last'] = model_name
@@ -714,7 +745,8 @@ def coverage():
             session['coverage_threshold'] = threshold
             session['coverage_complete'] = True
 
-            flash(f'Coverage completed with {model_name}!', 'success')
+            flash(f'Coverage completed with {model_name}: {_run_note(coverage_service.last_stats)}', 'success')
+            _flash_failures(coverage_service.last_stats)
             return redirect(url_for('main.coverage'))
 
         except Exception as e:
@@ -732,6 +764,8 @@ def coverage():
     ordem = ([last] if last in runs else []) + [j for j in runs if j != last]
     boards = [{'judge': j, 'paid': runs[j].get('paid', False),
                'threshold': runs[j].get('threshold', DEFAULT_THRESHOLD),
+               'note': _run_note(runs[j].get('stats')),
+               'failed': (runs[j].get('stats') or {}).get('failed', 0),
                'sources': coverage_tiles(runs[j].get('rows', []), runs[j].get('summary', []),
                                          runs[j].get('threshold', DEFAULT_THRESHOLD))}
               for j in ordem]

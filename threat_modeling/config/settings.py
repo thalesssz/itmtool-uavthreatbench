@@ -51,6 +51,22 @@ RAG_EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:4b")
 DATA_DIR = "./data"
 BLOCKS_DIR = "./blocks"
 
+# Throughput
+# A paid API answers many calls at once: 8 judge calls in parallel took 8 s
+# against 54 s in a row, with no decision changed beyond the judge's own
+# run-to-run variation. A local Ollama on one GPU answers one call at a time
+# (4 in parallel took as long as 4 in a row), so local runs stay sequential.
+# Results always come back in the original order.
+LLM_MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "8"))
+# A failed call is retried before it is reported. It is never turned into a
+# silent score of 0, which would read as "not covered".
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
+# Judgments are remembered by everything the judge reads (model, sampling and
+# the full prompt), so the same pair is never judged twice and the same input
+# gives the same number on a later run. Kept in DATA_DIR, which is the
+# persistent volume in the Docker setup. JUDGMENT_CACHE_PATH="" turns it off.
+JUDGMENT_CACHE_PATH = os.getenv("JUDGMENT_CACHE_PATH", os.path.join(DATA_DIR, "judgment_cache.sqlite"))
+
 
 
 # Paid model used by the "run with the paid model" buttons. The key stays on the
