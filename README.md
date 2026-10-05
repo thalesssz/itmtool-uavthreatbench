@@ -2,6 +2,39 @@
 
 Automated threat analysis using AI to process Microsoft Threat Modeling Tool (.tm7) files and produce structured security analyses with STRIDE classification and NIST 800-53 control suggestions.
 
+## About this fork: UAVThreatBench adaptations
+
+This fork adapts [ITA TMT](https://github.com/renatocraf/itmtool), by Renato Figueiredo, for a study that
+compares the threats found by the Microsoft Threat Modeling Tool, by LLMs and by the curated expected threats
+of the [UAVThreatBench](https://www.mdpi.com/2504-446X/9/9/657) dataset (Iyenghar, *Drones* 9(9), 657, 2025).
+The original code and its MIT license are kept, and every change is in the commits on top of `f95a5f4`.
+The rest of this README is the original one; the new settings are documented in `example_env` and
+[ARCHITECTURE.md](./ARCHITECTURE.md).
+
+| Area | What changed |
+| :--- | :--- |
+| Local and paid models | Ollama in the UI with no API key; OpenAI-compatible providers such as OpenRouter; a paid mode where the key stays on the server and the analyst and the judge are different models (`PAID_ANALYST_MODEL`, `PAID_JUDGE_MODEL`) |
+| Reproducibility | Temperature 0 and a fixed seed for every provider that supports them (`LLM_TEMPERATURE`, `LLM_SEED`) |
+| Analysis prompt | Exact STRIDE spelling, one category per threat, the six categories reviewed one by one with a definition each |
+| Judges | A score scale instead of a literal example score, which small models copied for every pair |
+| Reference coverage (new) | Checks a list of expected threats against every source (TMT threats, AI analysis, other files). A candidate must concern the same asset and the same security property, and each candidate counts for at most one expected threat (maximum bipartite matching). Web screen and `python -m threat_modeling.coverage_cli` |
+| Result screens | Every total is shown with its parts; a data flow &times; STRIDE grid shows where the pairs come from; one tile per expected threat |
+| Faster judging | Paid judge calls run in parallel (about 2 min instead of about 15 for 695 judgments, with the same coverage results); judgments are remembered, so a repeated run is instant; failed calls are retried and reported on screen instead of becoming a score of 0 |
+
+Quick start with Docker (sessions and the judgment memory are kept in a volume):
+
+```bash
+cp example_env .env    # set the keys you use; the comments explain each setting
+docker build -t ita-tmt .
+docker run -d --name ita-tmt --env-file .env --add-host=host.docker.internal:host-gateway \
+  -p 9007:5000 -v ita-tmt-data:/app/data ita-tmt
+```
+
+Open `http://localhost:9007`. For a local model, run Ollama on the host and set
+`OLLAMA_URL=http://host.docker.internal:11434` in `.env`.
+
+Adaptations by Thales Souza (ITA).
+
 ## Table of Contents
 
 - [Overview](#overview)
